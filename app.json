@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "shovibam",
+    "slug": "snack-855f3210-bcb7-4efd-b35b-c09daa5b9ed9",
+    "version": "1.0.1",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.shovibam.app" 
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
