@@ -2,7 +2,7 @@
   "expo": {
     "name": "shovibam",
     "slug": "snack-d210401b-5d2d-4c95-8cc2-be9cfa0d2daf",
-    "version": "1.0.8", 
+    "version": "1.0.12", 
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
