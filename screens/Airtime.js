@@ -11,6 +11,7 @@ import {
   RefreshControl,
   Platform,
   Image,
+  FlatList,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -20,6 +21,7 @@ import GeneralIconsMenuButtons from '../components/GeneralIconsMenuButtons';
 import PinVerifyPopup from '../components/PinVerifyPopup';
 import TransactionResultModal from '../components/Receipt';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { sendEmail } from '../utils/emailService'; // Import the email service
 
 // Import provider icons for Airtime
 const airtimeProviderIcons = {
@@ -27,6 +29,7 @@ const airtimeProviderIcons = {
   GLO: require('../assets/glo_icon.png'),
   AIRTEL: require('../assets/airtel_icon.png'),
   '9MOBILE': require('../assets/ninemobile_icon.png'),
+  // SIM_CARD_GENERIC reference has been removed from here
 };
 
 // Helper function to format money
@@ -70,6 +73,7 @@ export default function AirtimeScreen() {
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [reference, setReference] = useState('');
+  const [transactionHistory, setTransactionHistory] = useState([]);
 
   // New state variables for PIN and Transaction Result
   const [pinVerifyVisible, setPinVerifyVisible] = useState(false);
@@ -81,7 +85,34 @@ export default function AirtimeScreen() {
     debug: '',
   });
 
+  // Load transaction history from AsyncStorage
+  const loadTransactionHistory = async () => {
+    try {
+      const history = await AsyncStorage.getItem('airtimeTransactionHistory');
+      if (history) {
+        setTransactionHistory(JSON.parse(history));
+      }
+    } catch (error) {
+      console.error('Failed to load transaction history:', error);
+    }
+  };
+
+  // Save transaction to history
+  const saveToTransactionHistory = async (transaction) => {
+    try {
+      // Ensure the transaction has an 'id' for FlatList keyExtractor
+      const transactionWithId = { ...transaction, id: transaction.id || generateUniqueReference() };
+      const newHistory = [transactionWithId, ...transactionHistory.slice(0, 9)]; // Keep last 10 transactions
+      await AsyncStorage.setItem('airtimeTransactionHistory', JSON.stringify(newHistory));
+      setTransactionHistory(newHistory);
+    } catch (error) {
+      console.error('Failed to save transaction history:', error);
+    }
+  };
+
+
   useEffect(() => {
+    loadTransactionHistory(); // Load history on component mount
     // Load cached providers if available
     const loadCachedProviders = async () => {
       try {
@@ -179,6 +210,42 @@ export default function AirtimeScreen() {
     return true;
   };
 
+  // Function to send transaction email
+  const sendTransactionEmail = async (transaction, status) => {
+    try {
+      if (!accountToUse?.customer_email) {
+        console.warn('Customer email not available for sending transaction email.');
+        return;
+      }
+
+      const subject = `Airtime Purchase ${status === 'success' ? 'Successful' : 'Failed'}`;
+      const body = `
+        <h3 style="color: ${status === 'success' ? '#4CAF50' : '#F44336'};">
+          Airtime Purchase ${status === 'success' ? 'Successful' : 'Failed'}
+        </h3>
+        <p><strong>Network:</strong> ${transaction.provider}</p>
+        <p><strong>Phone Number:</strong> ${transaction.phoneNumber}</p>
+        <p><strong>Amount:</strong> ₦${formatAmount(transaction.amount)}</p>
+        <p><strong>Status:</strong> ${transaction.status}</p>
+        <p><strong>Date:</strong> ${new Date(transaction.date).toLocaleString()}</p>
+        ${transaction.message ? `<p><strong>Message:</strong> ${transaction.message}</p>` : ''}
+        <p>Thank you for using our service.</p>
+      `;
+
+      await sendEmail({
+        toEmail: accountToUse.customer_email,
+        subject,
+        body,
+        isHtml: true,
+      });
+      console.log(`Transaction ${status} email sent for reference: ${transaction.id}`);
+    } catch (error) {
+      console.error('Failed to send transaction email:', error);
+    }
+  };
+
+
+  // Modify handlePinVerifiedSuccess to include email sending
   const handlePinVerifiedSuccess = async () => {
     setLoading(true);
     setError('');
@@ -190,7 +257,20 @@ export default function AirtimeScreen() {
         reference: reference,
       });
 
-      if (topupResponse && topupResponse.success === true) {
+      // Create transaction record for history
+      const transactionRecord = {
+        id: reference, // Use the generated reference as ID
+        provider: selectedProvider.code,
+        phoneNumber: phoneNumber,
+        amount: amount,
+        status: topupResponse?.success ? 'success' : 'failed',
+        date: new Date().toISOString(),
+        message: topupResponse?.message || '',
+      };
+
+      await saveToTransactionHistory(transactionRecord);
+
+      if (topupResponse?.success) {
         setTransactionResult({
           visible: true,
           status: 'success',
@@ -206,6 +286,8 @@ export default function AirtimeScreen() {
           }),
         });
         await refreshAuthData();
+        // Send success email
+        await sendTransactionEmail(transactionRecord, 'success');
       } else {
         setTransactionResult({
           visible: true,
@@ -217,8 +299,23 @@ export default function AirtimeScreen() {
           }),
         });
         setError(topupResponse?.message || 'Airtime top-up failed.');
+        // Send failure email
+        await sendTransactionEmail(transactionRecord, 'failed');
       }
     } catch (err) {
+      const transactionRecord = {
+        id: reference,
+        provider: selectedProvider?.code || 'unknown',
+        phoneNumber: phoneNumber,
+        amount: amount,
+        status: 'failed',
+        date: new Date().toISOString(),
+        message: err.message || 'Transaction failed due to network error.',
+      };
+
+      await saveToTransactionHistory(transactionRecord);
+      await sendTransactionEmail(transactionRecord, 'failed'); // Send failure email on caught error
+
       setTransactionResult({
         visible: true,
         status: 'failed',
@@ -271,6 +368,7 @@ export default function AirtimeScreen() {
     try {
       await refreshAuthData();
       await fetchAirtimeProviders(); // Refresh providers as well
+      await loadTransactionHistory(); // Refresh history on pull-to-refresh
     } catch (error) {
       console.error('Error during pull-to-refresh:', error);
     } finally {
@@ -304,6 +402,63 @@ export default function AirtimeScreen() {
     );
   }
 
+  // Function to handle transaction card click
+  const handleTransactionCardClick = (item) => {
+    // Find the provider from the providers list that matches the transaction
+    const provider = providers.find(p => p.code === item.provider);
+    if (provider) {
+      setSelectedProvider(provider);
+      setPhoneNumber(item.phoneNumber);
+      setAmount(item.amount.toString()); // Ensure amount is a string for TextInput
+      setStep(2); // Move to the purchase form step
+      setError(''); // Clear any previous errors
+    } else {
+      Alert.alert('Provider Not Found', `Could not find details for ${item.provider}. Please select manually.`);
+    }
+  };
+
+  const renderTransactionItem = ({ item }) => (
+    <TouchableOpacity
+      onPress={() => handleTransactionCardClick(item)}
+      activeOpacity={0.7}
+      style={styles.touchableTransactionCard} // Added a style for touchable
+    >
+      <View style={[
+        styles.transactionCard,
+        item.status === 'success' ? styles.successCard : styles.failedCard
+      ]}>
+        <View style={styles.transactionHeader}>
+          {/* Use a MaterialIcons sim-card directly as a fallback icon */}
+          {item.provider && airtimeProviderIcons[item.provider.toUpperCase()] ? (
+            <Image 
+              source={airtimeProviderIcons[item.provider.toUpperCase()]} 
+              style={styles.transactionProviderIcon} 
+            />
+          ) : (
+            // Fallback to MaterialIcons "sim-card" directly
+            <Icon name="sim-card" size={16} color="#B0B0B0" style={styles.transactionProviderIcon} />
+          )}
+          <Text style={styles.transactionProvider} numberOfLines={1}>
+            {item.provider}
+          </Text>
+          <Text style={[
+            styles.transactionStatus,
+            item.status === 'success' ? styles.successStatus : styles.failedStatus
+          ]}>
+            {item.status.toUpperCase()}
+          </Text>
+        </View>
+        <Text style={styles.transactionPhone} numberOfLines={1}>
+          {item.phoneNumber}
+        </Text>
+        <Text style={styles.transactionAmount}>
+          ₦{formatAmount(item.amount)}
+        </Text>
+        {/* Removed transactionDate and transactionMessage from here */}
+      </View>
+    </TouchableOpacity>
+  );
+
   return (
     <View style={styles.container}>
       <ScrollView
@@ -331,6 +486,22 @@ export default function AirtimeScreen() {
             </Text>
           </View>
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+          {/* Recent Transactions Section */}
+          {transactionHistory.length > 0 && (
+            <View style={styles.transactionHistoryContainer}>
+              <Text style={styles.sectionTitle}>Recent Transactions</Text>
+              <FlatList
+                data={transactionHistory}
+                renderItem={renderTransactionItem}
+                keyExtractor={(item) => item.id}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.transactionList}
+              />
+            </View>
+          )}
+
           {step === 1 && (
             <View style={styles.providerSelectionContainer}>
               <Text style={styles.sectionTitle}>Select Network Provider</Text>
@@ -467,7 +638,6 @@ export default function AirtimeScreen() {
     </View>
   );
 }
-
 
 
 const styles = StyleSheet.create({
@@ -715,4 +885,75 @@ const styles = StyleSheet.create({
     marginTop: -10,
     marginBottom: 20,
   },
+  // Updated styles for the compact transaction history section
+  transactionHistoryContainer: {
+    marginBottom: 20,
+  },
+  transactionList: {
+    paddingHorizontal: 5,
+  },
+  touchableTransactionCard: { // New style for TouchableOpacity wrapper
+    marginRight: 8, // Same as transactionCard.marginRight to maintain spacing
+  },
+  transactionCard: {
+    width: 120, // Reduced from 160
+    borderRadius: 8,
+    padding: 10, // Reduced from 12
+    // marginRight: 8, // Moved to touchableTransactionCard
+    backgroundColor: '#0A1128',
+    borderWidth: 1,
+    height: 90, // Fixed height for consistency
+    justifyContent: 'space-between', // Added for vertical distribution of content
+  },
+  successCard: {
+    borderColor: 'rgba(76, 175, 80, 0.3)',
+  },
+  failedCard: {
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+  },
+  transactionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4, // Reduced from 8
+  },
+  transactionProviderIcon: {
+    width: 16, // Reduced from 20
+    height: 16, // Reduced from 20
+    marginRight: 4, // Reduced from 6
+    resizeMode: 'contain', // Added to ensure image scales correctly
+  },
+  transactionProvider: {
+    flex: 1,
+    fontSize: 10, // Reduced from 12
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  transactionStatus: {
+    fontSize: 8, // Reduced from 10
+    fontWeight: 'bold',
+    paddingHorizontal: 3, // Reduced from 4
+    paddingVertical: 1, // Reduced from 2
+    borderRadius: 3, // Reduced from 4
+  },
+  successStatus: {
+    backgroundColor: 'rgba(76, 175, 80, 0.2)',
+    color: '#4CAF50',
+  },
+  failedStatus: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    color: '#EF4444',
+  },
+  transactionPhone: {
+    fontSize: 12, // Reduced from 14
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 2, // Reduced from 4
+  },
+  transactionAmount: {
+    fontSize: 14, // Reduced from 16
+    fontWeight: 'bold',
+    color: '#4CC9F0',
+    // marginBottom removed as per optimization
+  },
+  // Removed transactionDate and transactionMessage styles as they're no longer used
 });

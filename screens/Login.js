@@ -13,7 +13,7 @@ import {
   KeyboardAvoidingView,
   Animated,
 } from 'react-native';
-import { FontAwesome5 } from '@expo/vector-icons'; 
+import { FontAwesome5 } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext'; // Corrected import path
 import { useNavigation } from '@react-navigation/native';
 import Loginicons from '../components/Loginicons';
@@ -28,6 +28,7 @@ import {
   fetchAllAccountsByTechvibesId,
   mapDevice,
 } from '../services/AuthService';
+import { sendEmail } from '../utils/emailService';
 import fintechList from '../utils/allowedFintechs.json';
 import logo from '../assets/logo.png';
 // Import your custom biometric icon. Make sure to place this image in your assets folder.
@@ -46,6 +47,34 @@ const COLOURS = {
   shadow: '#000000',
   error: '#FF6B6B',
   success: '#28A745',
+};
+
+// Helper function to generate login email content
+const generateLoginEmailContent = (userData, deviceInfo) => {
+  const loginTime = new Date().toLocaleString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+
+  return `
+    <h2>Successful Login Notification</h2>
+    <p>Your account was accessed successfully.</p>
+    
+    <p><strong>Login Details:</strong></p>
+    <ul>
+      <li><strong>Account Name:</strong> ${userData.name || 'N/A'}</li>
+      <li><strong>Account Number:</strong> ${userData.account_number || 'N/A'}</li>
+      <li><strong>Login Time:</strong> ${loginTime}</li>
+      <li><strong>Device ID:</strong> ${deviceInfo.device_fingerprint || 'N/A'}</li>
+      <li><strong>IP Address:</strong> ${deviceInfo.ip || 'Not available'}</li>
+    </ul>
+    
+    <p>If you didn't initiate this login, please contact support immediately.</p>
+  `;
 };
 
 const LoginScreen = ({ navigation }) => {
@@ -67,13 +96,13 @@ const LoginScreen = ({ navigation }) => {
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [isDeviceMapped, setIsDeviceMapped] = useState(false);
   // State for password visibility
-  const [showPassword, setShowPassword] = useState(false); 
+  const [showPassword, setShowPassword] = useState(false);
 
   // Animated value for biometric button scale
   const biometricScaleValue = useRef(new Animated.Value(1)).current;
 
   // Declare all refs here at the top of the component
-  const scrollRef = useRef(); 
+  const scrollRef = useRef();
   const identifierInputRef = useRef(null); // <-- Added this declaration
   const otpInputRef = useRef(null); // <-- Added this declaration
   const passwordInputRef = useRef(null); // <-- Added this declaration
@@ -288,6 +317,35 @@ const LoginScreen = ({ navigation }) => {
         if (!passwordStored) {
           addDebugLog('Failed to store password');
         }
+
+        // Send login notification email
+        try {
+          const emailContent = generateLoginEmailContent(
+            result.account,
+            {
+              device_fingerprint: deviceFingerprint,
+              ip: result.ip
+            }
+          );
+          if (result.account?.email) {
+            const emailResult = await sendEmail({
+              toEmail: result.account.email,
+              subject: 'Successful Login Notification',
+              body: emailContent,
+              isHtml: true
+            });
+            if (emailResult.success) {
+              addDebugLog('Login notification email sent successfully');
+            } else {
+              addDebugLog('Failed to send login notification email', emailResult);
+            }
+          } else {
+            addDebugLog('No email address available for login notification.');
+          }
+        } catch (emailError) {
+          addDebugLog('Error sending login notification email', { error: emailError.message });
+        }
+
         await setLoginState({ userData: result.account, userToken: result.userToken });
         setOtpMessage('Login successful! Redirecting...');
         setMessageType('success');
@@ -438,10 +496,10 @@ const LoginScreen = ({ navigation }) => {
         <ScrollView
           contentContainerStyle={[
             styles.scrollContent,
-            { paddingBottom: 120 } 
+            { paddingBottom: 120 }
           ]}
           keyboardShouldPersistTaps="handled"
-          ref={scrollRef} 
+          ref={scrollRef}
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.logoSection}>
@@ -495,7 +553,7 @@ const LoginScreen = ({ navigation }) => {
             {!isDeviceMapped && (
               <View style={styles.inputContainer}>
                 <TextInput
-                  ref={identifierInputRef} 
+                  ref={identifierInputRef}
                   style={styles.input}
                   placeholder="Username or Account Number"
                   placeholderTextColor={COLOURS.textMuted}
@@ -526,7 +584,7 @@ const LoginScreen = ({ navigation }) => {
             {!isDeviceMapped && userData && showOtpInput && (
               <View style={styles.otpSection}>
                 <TextInput
-                  ref={otpInputRef} 
+                  ref={otpInputRef}
                   style={styles.otpInput}
                   placeholder="Enter 6-digit OTP"
                   placeholderTextColor={COLOURS.textMuted}
@@ -554,13 +612,13 @@ const LoginScreen = ({ navigation }) => {
               <View>
                 <View style={styles.passwordContainer}>
                   <TextInput
-                    ref={passwordInputRef} 
+                    ref={passwordInputRef}
                     style={styles.passwordInput}
                     placeholder="Enter Password"
                     placeholderTextColor={COLOURS.textMuted}
                     value={password}
                     onChangeText={setPassword}
-                    secureTextEntry={!showPassword} 
+                    secureTextEntry={!showPassword}
                     editable={!isLoading}
                     onFocus={() => {
                       setTimeout(() => {
@@ -569,13 +627,13 @@ const LoginScreen = ({ navigation }) => {
                     }}
                   />
                   <TouchableOpacity
-                    style={styles.eyeIcon} 
+                    style={styles.eyeIcon}
                     onPress={() => setShowPassword(!showPassword)}
                   >
-                    <FontAwesome5 
-                      name={showPassword ? 'eye-slash' : 'eye'} 
-                      size={20} 
-                      color={COLOURS.textMuted} 
+                    <FontAwesome5
+                      name={showPassword ? 'eye-slash' : 'eye'}
+                      size={20}
+                      color={COLOURS.textMuted}
                     />
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -604,7 +662,7 @@ const LoginScreen = ({ navigation }) => {
                     {isLoading ? (
                       <ActivityIndicator size="small" color="#fff" />
                     ) : (
-                      <Image source={biometricIcon} style={styles.biometricIcon} /> 
+                      <Image source={biometricIcon} style={styles.biometricIcon} />
                     )}
                   </TouchableOpacity>
                 </Animated.View>
@@ -618,30 +676,30 @@ const LoginScreen = ({ navigation }) => {
           </View>
           {/* Auth links with icons */}
           <View style={styles.authLinksContainer}>
-            <TouchableOpacity 
-              style={styles.authLink} 
+            <TouchableOpacity
+              style={styles.authLink}
               onPress={() => navigation.navigate('ForgotPassword')}
             >
-              <FontAwesome5 
-                name="key" 
-                size={16} 
-                color={COLOURS.primary} 
-                style={styles.authLinkIcon} 
+              <FontAwesome5
+                name="key"
+                size={16}
+                color={COLOURS.primary}
+                style={styles.authLinkIcon}
               />
               <Text style={styles.authLinkText}>Forgot Password?</Text>
             </TouchableOpacity>
-            
+
             <Text style={styles.authLinkSeparator}>|</Text>
-            
-            <TouchableOpacity 
-              style={styles.authLink} 
+
+            <TouchableOpacity
+              style={styles.authLink}
               onPress={() => navigation.navigate('Register')}
             >
-              <FontAwesome5 
-                name="user-plus" 
-                size={16} 
-                color={COLOURS.primary} 
-                style={styles.authLinkIcon} 
+              <FontAwesome5
+                name="user-plus"
+                size={16}
+                color={COLOURS.primary}
+                style={styles.authLinkIcon}
               />
               <Text style={styles.authLinkText}>Create Account</Text>
             </TouchableOpacity>
@@ -660,12 +718,12 @@ const LoginScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLOURS.background, 
+    backgroundColor: COLOURS.background,
   },
   scrollContent: {
-    flexGrow: 1, 
-    justifyContent: 'center', 
-    paddingBottom: 120, 
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingBottom: 120,
     paddingHorizontal: 10,
   },
   logoSection: {
@@ -847,11 +905,11 @@ const styles = StyleSheet.create({
     width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 12, 
-    overflow: 'hidden', 
-    borderWidth: 1, 
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
     borderColor: COLOURS.border,
-    backgroundColor: COLOURS.secondary, 
+    backgroundColor: COLOURS.secondary,
   },
   passwordInput: {
     flex: 1,
@@ -966,9 +1024,9 @@ const styles = StyleSheet.create({
   },
   authLinkIcon: {
     marginRight: 6,
-    width: 16, 
-    height: 16, 
-    textAlign: 'center', 
+    width: 16,
+    height: 16,
+    textAlign: 'center',
   },
   authLinkText: {
     color: COLOURS.primary,
@@ -978,15 +1036,15 @@ const styles = StyleSheet.create({
   authLinkSeparator: {
     color: COLOURS.textMuted,
     fontSize: 14,
-    marginHorizontal: 8, 
+    marginHorizontal: 8,
   },
   footerWrapper: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: COLOURS.background, 
-    zIndex: 101, 
+    backgroundColor: COLOURS.background,
+    zIndex: 101,
   },
   // New style for the custom biometric image icon
   biometricIcon: {

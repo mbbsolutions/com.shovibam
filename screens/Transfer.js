@@ -8,7 +8,7 @@ import {
     StyleSheet,
     Alert,
     ActivityIndicator,
-    ScrollView, // Ensure ScrollView is imported
+    ScrollView,
     Platform,
     Keyboard,
     KeyboardAvoidingView,
@@ -24,7 +24,8 @@ import BankSearchDropdown from '../components/BankSearchDropdown';
 import PinVerifyPopup from '../components/PinVerifyPopup';
 import TransactionResultModal from '../components/Receipt';
 import GeneralIconsMenuButtons from '../components/GeneralIconsMenuButtons';
-import { getItem, saveItem } from '../utils/StorageService'; // Adjust path if necessary
+import { getItem, saveItem } from '../utils/StorageService';
+import { sendEmail } from '../utils/emailService';
 
 // Define a key for AsyncStorage specific to the user
 const RECIPIENT_HISTORY_KEY = (techvibesId) => `@recipient_history_${techvibesId}`;
@@ -37,7 +38,7 @@ const styles = StyleSheet.create({
     },
     scrollContainer: {
         padding: 16,
-        paddingBottom: 150, // Extra padding at bottom for keyboard
+        paddingBottom: 150,
     },
     headerCard: {
         backgroundColor: '#0A1128',
@@ -128,7 +129,6 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         alignItems: 'center',
         marginTop: 20,
-        // Web-specific styles for better interaction
         ...Platform.select({
             web: {
                 cursor: 'pointer',
@@ -205,7 +205,6 @@ const styles = StyleSheet.create({
     validationStatusError: {
         color: '#FF6B6B',
     },
-    // Styles for transfer history
     transactionHistoryTitle: {
         fontSize: 16,
         fontWeight: 'bold',
@@ -213,17 +212,16 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     transactionCardsContainer: {
-        flexDirection: 'row', // Keep items in a row
-        height: 120, // Fixed height for the scroll container
+        flexDirection: 'row',
+        height: 120,
         marginBottom: 20,
-        // No flexWrap or justifyContent: 'space-between' here as ScrollView handles layout
     },
     transactionCard: {
-        width: 160, // Fixed width for each card
-        height: 100, // Fixed height for each card
+        width: 160,
+        height: 100,
         borderRadius: 8,
         padding: 8,
-        marginRight: 10, // Space between cards
+        marginRight: 10,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.2,
@@ -239,21 +237,25 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         fontSize: 13,
     },
-    // New style for scroll hint icon
     scrollHint: {
         position: 'absolute',
         right: 10,
         top: '50%',
-        marginTop: -10, // Adjust to center vertically
+        marginTop: -10,
         color: '#4CC9F0',
-        zIndex: 1, // Ensure it's above other elements if necessary
-    }
+        zIndex: 1,
+    },
 });
+
+const generateTransactionReference = () => {
+    const timestamp = Date.now().toString(36); // Base36 timestamp
+    const randomStr = Math.random().toString(36).substr(2, 6); // Random string
+    return `TRF-${timestamp}-${randomStr}`.toUpperCase();
+};
 
 const TransferScreen = ({ navigation }) => {
     const { selectedAccount, isLoadingAuth, currentUserTechvibesId } = useAuth();
 
-    // Refs for input fields
     const amountInputRef = useRef(null);
     const accountNumberInputRef = useRef(null);
     const narrationInputRef = useRef(null);
@@ -277,7 +279,7 @@ const TransferScreen = ({ navigation }) => {
     const [isBankModalVisible, setIsBankModalVisible] = useState(false);
     const [bankSearchQuery, setBankSearchQuery] = useState('');
 
-    const [isLoading, setIsLoading] = useState(false); // This will control a global loading indicator if needed
+    const [isLoading, setIsLoading] = useState(false);
     const [isTransferring, setIsTransferring] = useState(false);
     const [userDetailsError, setUserDetailsError] = useState('');
     const [transferMessage, setTransferMessage] = useState('');
@@ -293,19 +295,17 @@ const TransferScreen = ({ navigation }) => {
 
     const [localTransferHistory, setLocalTransferHistory] = useState([]);
 
-    // Save history to AsyncStorage, memoized with useCallback
     const saveRecipientHistory = useCallback(async (history) => {
-        if (!currentUserTechvibesId) return; // Only save if a user ID is available
+        if (!currentUserTechvibesId) return;
         try {
             await saveItem(RECIPIENT_HISTORY_KEY(currentUserTechvibesId), history);
         } catch (error) {
             console.error('Error saving recipient history:', error);
         }
-    }, [currentUserTechvibesId]); // Depend on currentUserTechvibesId
+    }, [currentUserTechvibesId]);
 
-    // Load history from AsyncStorage, memoized with useCallback
     const loadRecipientHistory = useCallback(async () => {
-        if (!currentUserTechvibesId) return []; // Don't load if no user ID
+        if (!currentUserTechvibesId) return [];
         try {
             const history = await getItem(RECIPIENT_HISTORY_KEY(currentUserTechvibesId));
             return history || [];
@@ -313,9 +313,8 @@ const TransferScreen = ({ navigation }) => {
             console.error('Error loading recipient history:', error);
             return [];
         }
-    }, [currentUserTechvibesId]); // Depend on currentUserTechvibesId
+    }, [currentUserTechvibesId]);
 
-    // Initialize history on component mount, or when currentUserTechvibesId changes
     useEffect(() => {
         const initHistory = async () => {
             if (currentUserTechvibesId) {
@@ -326,16 +325,68 @@ const TransferScreen = ({ navigation }) => {
             }
         };
         initHistory();
-    }, [currentUserTechvibesId, loadRecipientHistory]); // Added loadRecipientHistory to dependency array
+    }, [currentUserTechvibesId, loadRecipientHistory]);
 
-
-    // Formats a number to a currency string with two decimal places and comma separators.
     const formatBalance = (num) => {
         const numStr = parseFloat(num).toFixed(2);
         return numStr.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     };
 
-    // Checks if all required fields for a transfer are filled.
+    const generateTransferEmailContent = (status, details) => {
+        const {
+            amount,
+            charges,
+            account_name,
+            account_number,
+            bank_name,
+            narration,
+            reference
+        } = details;
+
+        const formattedAmount = formatBalance(amount);
+        const formattedCharges = formatBalance(charges);
+        const total = formatBalance(amount + charges);
+        const formattedDate = new Date().toLocaleString();
+
+        if (status === 'success') {
+            return `
+                <h2>Transfer Successful! 🎉</h2>
+                <p>Your transfer was completed successfully.</p>
+                <p><strong>Details:</strong></p>
+                <ul>
+                    <li><strong>Amount:</strong> ${currency} ${formattedAmount}</li>
+                    <li><strong>Charges:</strong> ${currency} ${formattedCharges}</li>
+                    <li><strong>Total Debit:</strong> ${currency} ${total}</li>
+                    <li><strong>Recipient Name:</strong> ${account_name}</li>
+                    <li><strong>Account Number:</strong> ${account_number}</li>
+                    <li><strong>Bank Name:</strong> ${bank_name}</li>
+                    <li><strong>Narration:</strong> ${narration}</li>
+                    <li><strong>Reference:</strong> ${reference}</li>
+                    <li><strong>Date:</strong> ${formattedDate}</li>
+                </ul>
+                <p>Thank you for using our service!</p>
+            `;
+        } else {
+            return `
+                <h2>Transfer Failed! 🚨</h2>
+                <p>We're sorry, but your transfer could not be completed.</p>
+                <p><strong>Details:</strong></p>
+                <ul>
+                    <li><strong>Amount:</strong> ${currency} ${formattedAmount}</li>
+                    <li><strong>Recipient Name:</strong> ${account_name || 'N/A'}</li>
+                    <li><strong>Account Number:</strong> ${account_number}</li>
+                    <li><strong>Bank Name:</strong> ${bank_name}</li>
+                    <li><strong>Narration:</strong> ${narration || 'N/A'}</li>
+                    <li><strong>Reference:</strong> ${reference || 'N/A'}</li>
+                    <li><strong>Date:</strong> ${formattedDate}</li>
+                    <li><strong>Reason:</strong> ${details.message || 'Unknown error'}</li>
+                </ul>
+                <p>Please try again or contact support if the issue persists.</p>
+            `;
+        }
+    };
+
+
     const areAllRequirementsFilled = () => {
         return (
             amount &&
@@ -343,12 +394,11 @@ const TransferScreen = ({ navigation }) => {
             bankName &&
             accountNumber &&
             narration &&
-            (currency !== 'KES' || paymentMode) && // Payment mode is only required for KES
-            recipientName // Recipient name must be validated
+            (currency !== 'KES' || paymentMode) &&
+            recipientName
         );
     };
 
-    // Helper function to get consistent card colors based on bank name
     const getCardColor = (bankName) => {
         let hash = 0;
         for (let i = 0; i < bankName.length; i++) {
@@ -356,20 +406,19 @@ const TransferScreen = ({ navigation }) => {
         }
 
         const colors = [
-            '#4A6FA5', // Soft blue
-            '#6A8C8D', // Teal
-            '#8A6FA5', // Lavender
-            '#5D8A66', // Green
-            '#7A5D8A', // Purple
-            '#5D7A8A', // Steel blue
-            '#8A5D6D', // Mauve
-            '#6D8A5D'  // Olive
+            '#4A6FA5',
+            '#6A8C8D',
+            '#8A6FA5',
+            '#5D8A66',
+            '#7A5D8A',
+            '#5D7A8A',
+            '#8A5D6D',
+            '#6D8A5D'
         ];
 
         return colors[Math.abs(hash) % colors.length];
     };
 
-    // Function to add a completed transfer to the local history and persist it
     const addToTransferHistory = async (transferDetails) => {
         const newEntry = {
             bankName: transferDetails.bank_name,
@@ -377,43 +426,32 @@ const TransferScreen = ({ navigation }) => {
             accountNumber: transferDetails.account_number,
             recipientName: transferDetails.account_name,
             id: Date.now(),
-            timestamp: new Date().toISOString() // Track when added
+            timestamp: new Date().toISOString()
         };
 
         setLocalTransferHistory(prev => {
-            // Filter out existing entry for the same account number to avoid duplicates
             const updatedHistory = [
                 newEntry,
                 ...prev.filter(item =>
-                    item.accountNumber !== newEntry.accountNumber // Dedupe
+                    item.accountNumber !== newEntry.accountNumber
                 )
-            ].slice(0, 10); // Keep maximum 10 items
-            saveRecipientHistory(updatedHistory); // Persist to storage
+            ].slice(0, 10);
+            saveRecipientHistory(updatedHistory);
             return updatedHistory;
         });
     };
 
-    // Function to handle clicking on a history card
     const handleHistoryCardPress = (historyItem) => {
         setBankName(historyItem.bankName);
         setBankCode(historyItem.bankCode);
         setAccountNumber(historyItem.accountNumber);
         setRecipientName(historyItem.recipientName);
-
-        // Focus the amount field for quick entry
         amountInputRef.current?.focus();
     };
 
-    // Effect to load user details on component mount or selectedAccount change.
     useEffect(() => {
         const loadUserDetails = async () => {
-            // No longer blocking initial render based on isLoadingAuth or selectedAccount
-            // The UI will show placeholders instead.
-
-            // Only proceed with fetching if a selectedAccount is available
             if (!selectedAccount) {
-                // We don't set a userDetailsError here as it's expected not to have
-                // selectedAccount on initial load for some apps.
                 return;
             }
 
@@ -423,7 +461,6 @@ const TransferScreen = ({ navigation }) => {
             setCustomerId(newCustomerId);
             setSenderName(newSenderName);
 
-            // Set loading for this specific fetch operation
             setIsLoading(true);
             setUserDetailsError('');
 
@@ -438,13 +475,11 @@ const TransferScreen = ({ navigation }) => {
             setIsLoading(false);
         };
 
-        // Only load user details if auth is ready, to ensure currentUserTechvibesId is available for history
         if (!isLoadingAuth) {
-             loadUserDetails();
+            loadUserDetails();
         }
-    }, [selectedAccount, isLoadingAuth]); // Dependency on selectedAccount and isLoadingAuth
+    }, [selectedAccount, isLoadingAuth]);
 
-    // Effect to calculate charges based on the entered amount.
     useEffect(() => {
         if (amount) {
             const getCharge = async () => {
@@ -457,14 +492,12 @@ const TransferScreen = ({ navigation }) => {
         }
     }, [amount, currency]);
 
-    // Resets paymentMode if currency changes from KES.
     useEffect(() => {
         if (currency !== 'KES') {
             setPaymentMode('');
         }
     }, [currency]);
 
-    // Debounced effect to validate account number and fetch recipient name.
     useEffect(() => {
         if (!bankCode || !accountNumber || accountNumber.length < 10) {
             setRecipientName('');
@@ -494,10 +527,12 @@ const TransferScreen = ({ navigation }) => {
         return () => clearTimeout(debounceValidation);
     }, [bankCode, accountNumber, currency]);
 
-    // Handles the actual transfer initiation after PIN verification.
     const initiateTransfer = async () => {
         setIsTransferring(true);
-        setIsPinPopupVisible(false); // Close PIN popup immediately
+        setIsPinPopupVisible(false);
+
+        // Generate a reference upfront
+        const clientReference = generateTransactionReference();
 
         const transferData = {
             customer_id: customerId,
@@ -508,14 +543,17 @@ const TransferScreen = ({ navigation }) => {
             bank_name: bankName,
             account_number: accountNumber,
             narration,
-            ...(currency === 'KES' && { paymentMode }), // Conditionally include paymentMode for KES
+            client_reference: clientReference, // Add client-generated reference
+            ...(currency === 'KES' && { paymentMode }),
         };
 
         let resultStatus = 'failed';
         let resultTitle = 'Transfer Failed!';
         let resultReason = 'Unknown error';
-        let finalReference = 'N/A';
         let serverMessage = '';
+
+        // Initialize finalReference with the client-generated reference
+        let finalReference = clientReference;
 
         try {
             const result = await transferGeneral(transferData);
@@ -524,11 +562,11 @@ const TransferScreen = ({ navigation }) => {
                 resultStatus = 'success';
                 resultTitle = 'Transfer Successful!';
                 resultReason = result.server_response.server_message || 'Transaction completed successfully.';
-                finalReference = result.server_response.final_reference || 'N/A';
+                // Use server reference if available, fallback to client reference
+                finalReference = result.server_response.final_reference || clientReference;
                 serverMessage = result.server_response.server_message || '';
                 setTransferMessage(`✅ Transfer successful: ${serverMessage}`);
 
-                // Clear form fields on successful transfer
                 setAmount('');
                 setBankCode('');
                 setBankName('');
@@ -543,20 +581,73 @@ const TransferScreen = ({ navigation }) => {
                 serverMessage = result.server_response?.server_message || result.error || 'Transfer failed.';
                 setTransferMessage(`❌ Error: ${serverMessage}`);
             }
+
+            // Send email notification regardless of success/failure
+            if (selectedAccount?.customer_email) {
+                const emailContent = generateTransferEmailContent(resultStatus, {
+                    amount: parseFloat(amount),
+                    charges: parseFloat(charge),
+                    account_name: recipientName,
+                    account_number: accountNumber,
+                    bank_name: bankName,
+                    narration: narration,
+                    reference: finalReference, // Use the determined finalReference
+                    message: resultReason
+                });
+
+                try {
+                    await sendEmail({
+                        toEmail: selectedAccount.customer_email,
+                        subject: resultStatus === 'success'
+                            ? `Transfer Successful - ${currency} ${formatBalance(amount)} to ${recipientName}`
+                            : `Transfer Failed - ${currency} ${formatBalance(amount)}`,
+                        body: emailContent,
+                        isHtml: true
+                    });
+                    console.log('Email notification sent successfully');
+                } catch (emailError) {
+                    console.error('Failed to send email notification:', emailError);
+                }
+            }
         } catch (error) {
             resultStatus = 'failed';
             resultTitle = 'Transfer Failed!';
             resultReason = error.message || 'Network or unexpected error during transfer.';
             serverMessage = error.message || 'Transfer failed due to an unexpected error.';
             setTransferMessage(`❌ Error: ${serverMessage}`);
+
+            // Send failure email if possible
+            if (selectedAccount?.customer_email) {
+                const emailContent = generateTransferEmailContent('failed', {
+                    amount: parseFloat(amount),
+                    charges: parseFloat(charge),
+                    account_name: recipientName,
+                    account_number: accountNumber,
+                    bank_name: bankName,
+                    narration: narration,
+                    reference: clientReference, // Use the client-generated reference on catch
+                    message: resultReason
+                });
+
+                try {
+                    await sendEmail({
+                        toEmail: selectedAccount.customer_email,
+                        subject: `Transfer Failed - ${currency} ${formatBalance(amount)}`,
+                        body: emailContent,
+                        isHtml: true
+                    });
+                    console.log('Failure email notification sent');
+                } catch (emailError) {
+                    console.error('Failed to send failure email notification:', emailError);
+                }
+            }
         } finally {
             setIsTransferring(false);
-            // The logic to add to history is now handled in handleVerifyPinClick
             setTransferResultDetails({
                 status: resultStatus,
                 title: resultTitle,
                 message: resultReason,
-                reference: finalReference,
+                reference: finalReference, // Use the determined finalReference
                 amount: parseFloat(amount),
                 charges: parseFloat(charge),
                 account_name: recipientName,
@@ -564,16 +655,14 @@ const TransferScreen = ({ navigation }) => {
                 bank_name: bankName,
                 narration: narration,
             });
-            setIsReceiptModalVisible(true); // Show the receipt modal
+            setIsReceiptModalVisible(true);
         }
     };
 
-    // Handles validation before showing the PIN verification popup.
     const handleVerifyPinClick = (e) => {
-        // Prevent default form submission behavior on web
         if (Platform.OS === 'web') {
             e?.preventDefault?.();
-            Keyboard.dismiss(); // Explicitly dismiss keyboard for web
+            Keyboard.dismiss();
         }
 
         if (!areAllRequirementsFilled()) {
@@ -595,8 +684,6 @@ const TransferScreen = ({ navigation }) => {
             }
         }
 
-        // Save recipient to history as soon as PIN verification starts
-        // This ensures the card is created regardless of transfer success/failure
         if (bankName && bankCode && accountNumber && recipientName) {
             addToTransferHistory({
                 bank_name: bankName,
@@ -607,8 +694,8 @@ const TransferScreen = ({ navigation }) => {
         }
 
         setIsPinPopupVisible(true);
-        setTransactionPin(''); // Clear any previous PIN
-        setTransferResultDetails(null); // Clear previous result details
+        setTransactionPin('');
+        setTransferResultDetails(null);
     };
 
     return (
@@ -619,12 +706,10 @@ const TransferScreen = ({ navigation }) => {
         >
             <ScrollView
                 contentContainerStyle={styles.scrollContainer}
-                keyboardShouldPersistTaps="handled" // Ensures keyboard doesn't dismiss on tap outside
+                keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
             >
                 <GeneralIconsMenuButtons navigation={navigation} active="Transfer" />
-
-                {/* Header Card - Always visible */}
                 <View style={styles.headerCard}>
                     <View style={styles.topIconContainer}>
                         <Icon name="send" size={24} color="#4CC9F0" />
@@ -653,8 +738,6 @@ const TransferScreen = ({ navigation }) => {
                         </Text>
                     </View>
                 </View>
-
-                {/* Recent Transfers History - Always visible, shows empty state if no data */}
                 <View style={{ marginBottom: 20, position: 'relative' }}>
                     <Text style={styles.transactionHistoryTitle}>Recent Recipients</Text>
                     <ScrollView
@@ -695,8 +778,6 @@ const TransferScreen = ({ navigation }) => {
                         />
                     )}
                 </View>
-
-                {/* Transfer Form Card - Always visible */}
                 <View style={styles.headerCard}>
                     <View style={styles.formGroup}>
                         <Text style={styles.label}>Currency</Text>
@@ -712,8 +793,6 @@ const TransferScreen = ({ navigation }) => {
                             </Picker>
                         </View>
                     </View>
-
-                    {/* Bank selection */}
                     <View style={styles.formGroup}>
                         <Text style={styles.label}>Recipient Bank</Text>
                         <TouchableOpacity
@@ -739,8 +818,6 @@ const TransferScreen = ({ navigation }) => {
                             )}
                         </TouchableOpacity>
                     </View>
-
-                    {/* Account number */}
                     <View style={styles.formGroup}>
                         <Text style={styles.label}>Account Number</Text>
                         <TextInput
@@ -753,7 +830,6 @@ const TransferScreen = ({ navigation }) => {
                             keyboardType="numeric"
                             returnKeyType="next"
                             blurOnSubmit={false}
-                            // Updated onSubmitEditing to focus on Amount
                             onSubmitEditing={() => amountInputRef.current?.focus()}
                         />
                         {isVerifyingAccount && <Text style={[styles.validationStatus, styles.validationStatusLoading]}>Verifying...</Text>}
@@ -764,8 +840,6 @@ const TransferScreen = ({ navigation }) => {
                             </Text>
                         )}
                     </View>
-
-                    {/* Amount field (moved here) */}
                     <View style={styles.formGroup}>
                         <Text style={styles.label}>Amount</Text>
                         <TextInput
@@ -778,13 +852,10 @@ const TransferScreen = ({ navigation }) => {
                             keyboardType="numeric"
                             returnKeyType="next"
                             blurOnSubmit={false}
-                            // Updated onSubmitEditing to focus on Narration
                             onSubmitEditing={() => narrationInputRef.current?.focus()}
                         />
                         {amount && <Text style={styles.chargeText}>Charge: {formatBalance(charge)} {currency}</Text>}
                     </View>
-
-                    {/* Narration field */}
                     <View style={styles.formGroup}>
                         <Text style={styles.label}>Narration</Text>
                         <TextInput
@@ -805,7 +876,6 @@ const TransferScreen = ({ navigation }) => {
                             }}
                         />
                     </View>
-
                     {currency === 'KES' && (
                         <View style={styles.formGroup}>
                             <Text style={styles.label}>Payment Mode</Text>
@@ -822,8 +892,6 @@ const TransferScreen = ({ navigation }) => {
                             />
                         </View>
                     )}
-
-                    {/* "Verify Pin" Button with Pressable */}
                     <Pressable
                         style={({ pressed }) => [
                             styles.button,
@@ -842,12 +910,9 @@ const TransferScreen = ({ navigation }) => {
                         )}
                     </Pressable>
                 </View>
-
-                {/* Global Loading Indicator (if needed) - can be removed if granular is enough */}
                 {isLoading && (
                     <ActivityIndicator style={styles.loadingIndicator} size="small" color="#4CC9F0" />
                 )}
-
                 {transferMessage && (
                     <Text
                         style={transferMessage.startsWith('✅') ? styles.successText : styles.errorText}
@@ -855,8 +920,6 @@ const TransferScreen = ({ navigation }) => {
                         {transferMessage}
                     </Text>
                 )}
-
-                {/* Modals and Popups */}
                 <BankSearchDropdown
                     visible={isBankModalVisible}
                     query={bankSearchQuery}
@@ -873,12 +936,11 @@ const TransferScreen = ({ navigation }) => {
                         accountNumberInputRef.current?.focus();
                     }}
                 />
-
                 <PinVerifyPopup
                     visible={isPinPopupVisible}
                     onClose={() => setIsPinPopupVisible(false)}
                     onPinVerifiedSuccess={initiateTransfer}
-                    loading={isTransferring}
+                    parentLoading={isTransferring}
                     inputPin={transactionPin}
                     setPin={setTransactionPin}
                     transferDetails={{
@@ -894,7 +956,6 @@ const TransferScreen = ({ navigation }) => {
                     onPopUpComplete={() => { }}
                     isStandalonePinVerify={true}
                 />
-
                 <TransactionResultModal
                     visible={isReceiptModalVisible}
                     status={transferResultDetails?.status || 'failed'}

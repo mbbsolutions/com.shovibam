@@ -1,6 +1,7 @@
 import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchAllAccountsByTechvibesId } from '../services/AuthService';
+import { useEmailService } from '../utils/emailService'; // Add this near the top with other imports
 
 // --- STORAGE KEYS ---
 const AUTH_USER_KEY = '@auth_user';
@@ -55,6 +56,10 @@ export const AuthProvider = ({ children }) => {
   const [linkedAccounts, setLinkedAccounts] = useState([]);
   const [currentUserTechvibesId, setCurrentUserTechvibesId] = useState(null);
   const [lastSelectedAccountNumber, setLastSelectedAccountNumber] = useState(null);
+
+  // Destructure functions from the useEmailService hook
+  const { sendEmail: coreSendEmail, createUserEmailSender } = useEmailService();
+
 
   // --- SET SELECTED ACCOUNT WITH PERSISTENCE ---
   const setSelectedAccount = useCallback(async (account) => {
@@ -406,6 +411,39 @@ const refreshAuthData = useCallback(async () => {
     loadLastSelectedAccount,
     debugStorage,
     refreshAuthData, // <-- Added to context
+
+    /**
+     * Gets a pre-configured email sender for the current authenticated user
+     * @returns {{send: function}|null} Email sender object or null if no user email
+     */
+    getUserEmailSender: useCallback(() => {
+      // Use authUser or selectedAccount for email, prioritize customer_email
+      const userEmail = authUser?.customer_email || authUser?.email || selectedAccount?.customer_email || selectedAccount?.email;
+      return createUserEmailSender(userEmail);
+    }, [authUser, selectedAccount, createUserEmailSender]), // Add createUserEmailSender to dependencies
+
+    /**
+     * Directly send email to current user (convenience method)
+     * @param {string} subject 
+     * @param {string} body 
+     * @param {boolean} isHtml 
+     * @returns {Promise<{success: boolean, message: string}>}
+     */
+    sendEmailToUser: useCallback(async ({ subject, body, isHtml = true }) => {
+      const userEmail = authUser?.customer_email || authUser?.email || selectedAccount?.customer_email || selectedAccount?.email;
+      if (!userEmail) {
+        console.warn('AuthContext: sendEmailToUser: No user email available');
+        return { success: false, message: 'No user email available' };
+      }
+      
+      // Use the coreSendEmail function obtained from useEmailService
+      return coreSendEmail({
+        toEmail: userEmail,
+        subject,
+        body,
+        isHtml
+      });
+    }, [authUser, selectedAccount, coreSendEmail]), // Add coreSendEmail to dependencies
   };
 
   return (

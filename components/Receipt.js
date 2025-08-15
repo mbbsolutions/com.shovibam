@@ -84,7 +84,34 @@ const TransactionResultModal = ({
   const amount = transferDetails.amount || 0;
   const charges = transferDetails.charges || 0;
   const reference = transferDetails.reference || 'N/A';
-  const message = transferDetails.message || ''; // Get the message from transferDetails
+  let message = transferDetails.message || ''; // Get the message from transferDetails
+
+  // Check for insufficient balance messages and replace them
+  // This handles messages passed directly or if the PHP API is still returning the original message
+  const lowerMessage = message.toLowerCase();
+  const insufficientPhrases = [
+      'insufficient',
+      'balance',
+      'topup',
+      'wallet',
+      'low balance',
+      'not enough',
+      'fund',
+      'recharge'
+  ];
+
+  let isInsufficient = false;
+  for (const phrase of insufficientPhrases) {
+      if (lowerMessage.includes(phrase)) {
+          isInsufficient = true;
+          break;
+      }
+  }
+
+  // Also check if the error code indicates insufficient funds (from PHP API)
+  if (isInsufficient || transferDetails.code === 'INSUFFICIENT_FUNDS') {
+    message = 'ISB, Please Reachout to us for assistance';
+  }
 
   // Determine header color and icon based on status
   const headerColor = status === 'success' ? ReceiptColourScheme.success :
@@ -93,6 +120,11 @@ const TransactionResultModal = ({
   const iconName = status === 'success' ? 'check-circle' :
     status === 'pending' ? 'hourglass-empty' :
     'cancel';
+
+  // Update title - show empty string if it's the ISB message
+  const displayTitle = message === 'ISB, Please Reachout to us for assistance'
+    ? ''
+    : title; // RESTORED LOGIC HERE
 
   return (
     <Modal
@@ -108,7 +140,10 @@ const TransactionResultModal = ({
             <Icon name={iconName} size={60} color={headerColor} />
           </View>
           {/* Main Header */}
-          <Text style={[styles.mainHeader, { color: headerColor }]}>{title}</Text>
+          {/* The condition `displayTitle !== ''` is still important here */}
+          {displayTitle !== '' && ( 
+            <Text style={[styles.mainHeader, { color: headerColor }]}>{displayTitle}</Text>
+          )}
           <ScrollView style={styles.scrollView}>
             {/* Display error message if status is 'failed' */}
             {status === 'failed' && message && (
@@ -178,7 +213,7 @@ const TransactionResultModal = ({
             <TouchableOpacity
               style={[styles.button, styles.shareButton]}
               onPress={() => {
-                // Handle share logic
+                Alert.alert("Share", "Share functionality can be implemented here!");
               }}
             >
               <Text style={styles.buttonText}>Share</Text>
@@ -212,6 +247,7 @@ TransactionResultModal.propTypes = {
     charges: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
     reference: PropTypes.string,
     message: PropTypes.string, // Add message to PropTypes
+    code: PropTypes.string,    // Add code to PropTypes
   }),
 };
 

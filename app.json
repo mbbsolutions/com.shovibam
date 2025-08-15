@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "shovibam",
-    "slug": "snack-855f3210-bcb7-4efd-b35b-c09daa5b9ed9",
-    "version": "1.0.1",
+    "slug": "snack-d210401b-5d2d-4c95-8cc2-be9cfa0d2daf",
+    "version": "1.0.8", 
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -20,10 +20,16 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
+      "edgeToEdgeEnabled": true,
       "package": "com.shovibam.app" 
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "1d76721e-6fc0-470e-badc-616d6802efdb"
+      }
     }
   }
 }

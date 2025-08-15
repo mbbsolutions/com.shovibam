@@ -180,9 +180,9 @@ Bank: ${recipientBankName}`;
             }
         };
 
-        if (mode === 'pin' && inputPin.length === 4) {
+        if (mode === 'pin' && inputPin && inputPin.length === 4) {
             verifyPin();
-        } else if (inputPin.length < 4) {
+        } else if (inputPin && inputPin.length < 4) {
             setPinStatus('idle');
             setPinStatusMsg('');
         }
@@ -287,7 +287,7 @@ Bank: ${recipientBankName}`;
                                         styles.button,
                                         styles.sendButton,
                                         { flex: 1, minWidth: 80 },
-                                        pinStatus !== 'success' || verifyingPin || parentLoading ? styles.disabledButton : {},
+                                        (pinStatus !== 'success' || verifyingPin || parentLoading) && styles.disabledButton,
                                     ]}
                                     onPress={handleSendButtonPress}
                                     disabled={pinStatus !== 'success' || verifyingPin || parentLoading}
